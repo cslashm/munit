@@ -227,6 +227,36 @@ munit_logf_ex(MunitLogLevel level, const char* filename, int line, const char* f
   }
 }
 
+MUNIT_PRINTF(6, 7)
+void munit_logm_ex(MunitLogLevel level, const char* filename, int line,
+                   void* mem, size_t size, const char* format, ...) {
+
+    char * hex;
+    int l;
+
+    hex = malloc(size*2+1);
+    memset(hex, 0, size*2+1);
+    for (uint32_t i = 0; i < size; i++) {
+      snprintf(hex+2*i, 3, "%.02x", ((unsigned char*)mem)[i]);
+    }
+
+    char *out;
+    int out_len = size*2+1+2048;
+    out = malloc(out_len);
+    memset(out, 0, out_len);
+
+    va_list ap;
+    va_start(ap, format);
+    l = vsnprintf(out, out_len, format, ap);
+    l = snprintf(out+l, out_len-l, " %s", hex);
+    va_end(ap);
+
+    munit_logf_ex(level, filename, line, "%s", out);
+
+    free(out);
+    free(hex);
+}
+
 void
 munit_errorf_ex(const char* filename, int line, const char* format, ...) {
   va_list ap;
@@ -1055,13 +1085,13 @@ typedef struct {
   munit_bool fatal_failures;
 } MunitTestRunner;
 
-const char*
+const MunitParameter*
 munit_parameters_get(const MunitParameter params[], const char* key) {
   const MunitParameter* param;
 
   for (param = params ; param != NULL && param->name != NULL ; param++)
     if (strcmp(param->name, key) == 0)
-      return param->value;
+      return param;
   return NULL;
 }
 
@@ -1074,16 +1104,20 @@ munit_print_time(FILE* fp, munit_uint64_t nanoseconds) {
 
 /* Add a paramter to an array of parameters. */
 static MunitResult
-munit_parameters_add(size_t* params_size, MunitParameter* params[MUNIT_ARRAY_PARAM(*params_size)], char* name, char* value) {
+munit_parameters_add(size_t* params_size, MunitParameter* params[MUNIT_ARRAY_PARAM(*params_size)], char* name, const MunitParameterValue* value) {
   *params = realloc(*params, sizeof(MunitParameter) * (*params_size + 2));
   if (*params == NULL)
     return MUNIT_ERROR;
 
   (*params)[*params_size].name = name;
-  (*params)[*params_size].value = value;
+  if (value != NULL) {
+    (*params)[*params_size].value = *value;
+  } else {
+    (*params)[*params_size].value = (MunitParameterValue){.type = 0, .ptr = NULL};
+  }
   (*params_size)++;
   (*params)[*params_size].name = NULL;
-  (*params)[*params_size].value = NULL;
+  (*params)[*params_size].value.ptr = NULL;
 
   return MUNIT_OK;
 }
@@ -1317,7 +1351,7 @@ munit_test_runner_run_test_with_params(MunitTestRunner* runner, const MunitTest*
         first = 0;
       }
 
-      output_l += fprintf(MUNIT_OUTPUT_FILE, "%s=%s", param->name, param->value);
+      output_l += fprintf(MUNIT_OUTPUT_FILE, "%s=%s", param->name, param->value.name);
     }
     while (output_l++ < MUNIT_TEST_NAME_LEN) {
       fputc(' ', MUNIT_OUTPUT_FILE);
@@ -1523,7 +1557,7 @@ munit_test_runner_run_test_wild(MunitTestRunner* runner,
                                 MunitParameter* params,
                                 MunitParameter* p) {
   const MunitParameterEnum* pe;
-  char** values;
+  MunitParameterValue* values;
   MunitParameter* next;
 
   for (pe = test->parameters ; pe != NULL && pe->name != NULL ; pe++) {
@@ -1534,7 +1568,7 @@ munit_test_runner_run_test_wild(MunitTestRunner* runner,
   if (pe == NULL)
     return;
 
-  for (values = pe->values ; *values != NULL ; values++) {
+  for (values = pe->values ; values->name != NULL ; values++) {
     next = p + 1;
     p->value = *values;
     if (next->name == NULL) {
@@ -1570,7 +1604,7 @@ munit_test_runner_run_test(MunitTestRunner* runner,
   const MunitParameter* cli_p;
   munit_bool filled;
   unsigned int possible;
-  char** vals;
+  MunitParameterValue* vals;
   size_t first_wild;
   const MunitParameter* wp;
   int pidx;
@@ -1590,10 +1624,18 @@ munit_test_runner_run_test(MunitTestRunner* runner,
       filled = 0;
       for (cli_p = runner->parameters ; cli_p != NULL && cli_p->name != NULL ; cli_p++) {
         if (strcmp(cli_p->name, pe->name) == 0) {
-          if (MUNIT_UNLIKELY(munit_parameters_add(&params_l, &params, pe->name, cli_p->value) != MUNIT_OK))
-            goto cleanup;
-          filled = 1;
-          break;
+          /* retrieve the full value*/
+          for (MunitParameterValue* value = pe->values; value != NULL; value++) {
+            if (strcmp(value->name, cli_p->value.name) == 0) {
+              if (MUNIT_UNLIKELY(munit_parameters_add(&params_l, &params, pe->name, value) != MUNIT_OK))
+                goto cleanup;
+              filled = 1;
+              break;
+            }
+          }
+          if (filled) {
+            break;
+          }
         }
       }
       if (filled)
@@ -1601,21 +1643,21 @@ munit_test_runner_run_test(MunitTestRunner* runner,
 
       /* Nothing from CLI, is the enum NULL/empty?  We're not a
        * fuzzer… */
-      if (pe->values == NULL || pe->values[0] == NULL)
+      if (pe->values == NULL || pe->values[0].name == NULL)
         continue;
 
       /* If --single was passed to the CLI, choose a value from the
        * list of possibilities randomly. */
       if (runner->single_parameter_mode) {
         possible = 0;
-        for (vals = pe->values ; *vals != NULL ; vals++)
+        for (vals = pe->values ; vals != NULL ; vals++)
           possible++;
         /* We want the tests to be reproducible, even if you're only
          * running a single test, but we don't want every test with
          * the same number of parameters to choose the same parameter
          * number, so use the test name as a primitive salt. */
         pidx = munit_rand_at_most(munit_str_hash(test_name), possible - 1);
-        if (MUNIT_UNLIKELY(munit_parameters_add(&params_l, &params, pe->name, pe->values[pidx]) != MUNIT_OK))
+        if (MUNIT_UNLIKELY(munit_parameters_add(&params_l, &params, pe->name, &pe->values[pidx]) != MUNIT_OK))
           goto cleanup;
       } else {
         /* We want to try every permutation.  Put in a placeholder
@@ -1630,7 +1672,7 @@ munit_test_runner_run_test(MunitTestRunner* runner,
       for (wp = wild_params ; wp != NULL && wp->name != NULL ; wp++) {
         for (pe = test->parameters ; pe != NULL && pe->name != NULL && pe->values != NULL ; pe++) {
           if (strcmp(wp->name, pe->name) == 0) {
-            if (MUNIT_UNLIKELY(munit_parameters_add(&params_l, &params, pe->name, pe->values[0]) != MUNIT_OK))
+            if (MUNIT_UNLIKELY(munit_parameters_add(&params_l, &params, pe->name, &pe->values[0]) != MUNIT_OK))
               goto cleanup;
           }
         }
@@ -1767,7 +1809,7 @@ munit_suite_list_tests(const MunitSuite* suite, munit_bool show_params, const ch
   const MunitTest* test;
   const MunitParameterEnum* params;
   munit_bool first;
-  char** val;
+  MunitParameterValue* val;
   const MunitSuite* child_suite;
 
   for (test = suite->tests ;
@@ -1787,14 +1829,14 @@ munit_suite_list_tests(const MunitSuite* suite, munit_bool show_params, const ch
         } else {
           first = 1;
           for (val = params->values ;
-               *val != NULL ;
+               val->name != NULL ;
                val++ ) {
             if(!first) {
               fputs(", ", stdout);
             } else {
               first = 0;
             }
-            fputs(*val, stdout);
+            fputs(val->name, stdout);
           }
           putc('\n', stdout);
         }
@@ -1927,10 +1969,10 @@ munit_suite_main_custom(const MunitSuite* suite, void* user_data,
           goto cleanup;
         }
         runner.parameters[parameters_size].name = (char*) argv[arg + 1];
-        runner.parameters[parameters_size].value = (char*) argv[arg + 2];
+        runner.parameters[parameters_size].value = (MunitParameterValue)munit_parameter_unspecified(argv[arg + 2]);
         parameters_size++;
         runner.parameters[parameters_size].name = NULL;
-        runner.parameters[parameters_size].value = NULL;
+        runner.parameters[parameters_size].value = (MunitParameterValue)MUNIT_END_PARAMETER;
         arg += 2;
       } else if (strcmp("color", argv[arg] + 2) == 0) {
         if (arg + 1 >= argc) {

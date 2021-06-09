@@ -185,6 +185,15 @@ typedef enum {
 MUNIT_PRINTF(4, 5)
 void munit_logf_ex(MunitLogLevel level, const char* filename, int line, const char* format, ...);
 
+MUNIT_PRINTF(6, 7)
+void munit_logm_ex(MunitLogLevel level, const char* filename, int line, void* mem, size_t size, const char* format, ...);
+
+#define munit_logf_mem(level, mem, size, format, ...) \
+  munit_logm_ex(level, __FILE__, __LINE__, mem, size, format, __VA_ARGS__)
+
+#define munit_log_mem(level, mem, size, msg) \
+  munit_logf_mem(level, mem, size, "%s", msg)
+
 #define munit_logf(level, format, ...) \
   munit_logf_ex(level, __FILE__, __LINE__, format, __VA_ARGS__)
 
@@ -416,16 +425,35 @@ typedef enum {
 } MunitResult;
 
 typedef struct {
-  char*  name;
-  char** values;
-} MunitParameterEnum;
+  int type;
+  char* name;
+  union {
+    void* ptr;
+    char* str;
+    uint32_t ui32;
+  };
+} MunitParameterValue;
+
+#define munit_parameter_ptr(n, p)      { .name = n,    .type = 1, .ptr = p }
+#define munit_parameter_str(n, s)      { .name = n,    .type = 2, .str = s }
+#define munit_parameter_ui32(n, i)     { .name = n,    .type = 3, .ui32 = i }
+#define munit_parameter_unspecified(n) { .name = n,    .type =-1, .ptr = NULL }
+#define MUNIT_END_PARAMETER            { .name = NULL, .type = 0, .ptr = NULL }
 
 typedef struct {
   char* name;
-  char* value;
+  MunitParameterValue value;
 } MunitParameter;
 
-const char* munit_parameters_get(const MunitParameter params[], const char* key);
+typedef struct {
+  char*  name;
+  MunitParameterValue *values;
+} MunitParameterEnum;
+
+const MunitParameter* munit_parameters_get(const MunitParameter params[], const char* key);
+#define munit_parameters_get_ptr(params, key)   (munit_parameters_get(params,key)->value.ptr)
+#define munit_parameters_get_str(params, key)   (munit_parameters_get(params,key)->value.str)
+#define munit_parameters_get_ui32(params, key)  (munit_parameters_get(params,key)->value.ui32)
 
 typedef enum {
   MUNIT_TEST_OPTION_NONE             = 0,
