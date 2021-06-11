@@ -1705,28 +1705,25 @@ munit_test_runner_run_suite(MunitTestRunner* runner,
   const MunitSuite* child_suite;
 
   /* Run the tests. */
-  for (test = suite->tests ; test != NULL && test->test != NULL ; test++) {
-    if (runner->tests != NULL) { /* Specific tests were requested on the CLI */
-      for (test_name = runner->tests ; test_name != NULL && *test_name != NULL ; test_name++) {
-        if ((pre_l == 0 || strncmp(pre, *test_name, pre_l) == 0) &&
-            strncmp(test->name, *test_name + pre_l, strlen(*test_name + pre_l)) == 0) {
-          munit_test_runner_run_test(runner, test, pre);
-          if (runner->fatal_failures && (runner->report.failed != 0 || runner->report.errored != 0))
-            goto cleanup;
+  for ( const MunitTest * const * tests_suite = suite->tests_suites; *tests_suite != NULL; tests_suite++) {
+    for (test = *tests_suite ; test != NULL && test->test != NULL ; test++) {
+      if (runner->tests != NULL) { /* Specific tests were requested on the CLI */
+        for (test_name = runner->tests ; test_name != NULL && *test_name != NULL ; test_name++) {
+          if ((pre_l == 0 || strncmp(pre, *test_name, pre_l) == 0) &&
+              strncmp(test->name, *test_name + pre_l, strlen(*test_name + pre_l)) == 0) {
+            munit_test_runner_run_test(runner, test, pre);
+            if (runner->fatal_failures && (runner->report.failed != 0 || runner->report.errored != 0))
+              goto cleanup;
+          }
         }
+      } else { /* Run all tests */
+        munit_test_runner_run_test(runner, test, pre);
       }
-    } else { /* Run all tests */
-      munit_test_runner_run_test(runner, test, pre);
     }
   }
 
   if (runner->fatal_failures && (runner->report.failed != 0 || runner->report.errored != 0))
     goto cleanup;
-
-  /* Run any child suites. */
-  for (child_suite = suite->suites ; child_suite != NULL && child_suite->prefix != NULL ; child_suite++) {
-    munit_test_runner_run_suite(runner, child_suite, pre);
-  }
 
  cleanup:
 
@@ -1811,41 +1808,36 @@ munit_suite_list_tests(const MunitSuite* suite, munit_bool show_params, const ch
   munit_bool first;
   MunitParameterValue* val;
   const MunitSuite* child_suite;
+  for (const MunitTest* tests_suite = suite->tests_suites[0]; tests_suite != NULL; tests_suite++) {
+    for (test = tests_suite ; test != NULL && test->test != NULL ; test++) {
+      if (pre != NULL)
+        fputs(pre, stdout);
+      puts(test->name);
 
-  for (test = suite->tests ;
-       test != NULL && test->name != NULL ;
-       test++) {
-    if (pre != NULL)
-      fputs(pre, stdout);
-    puts(test->name);
-
-    if (show_params) {
-      for (params = test->parameters ;
-           params != NULL && params->name != NULL ;
-           params++) {
-        fprintf(stdout, " - %s: ", params->name);
-        if (params->values == NULL) {
-          puts("Any");
-        } else {
-          first = 1;
-          for (val = params->values ;
-               val->name != NULL ;
-               val++ ) {
-            if(!first) {
-              fputs(", ", stdout);
-            } else {
-              first = 0;
+      if (show_params) {
+        for (params = test->parameters ;
+             params != NULL && params->name != NULL ;
+             params++) {
+          fprintf(stdout, " - %s: ", params->name);
+          if (params->values == NULL) {
+            puts("Any");
+          } else {
+            first = 1;
+            for (val = params->values ;
+                 val->name != NULL ;
+                 val++ ) {
+              if(!first) {
+                fputs(", ", stdout);
+              } else {
+                first = 0;
+              }
+              fputs(val->name, stdout);
             }
-            fputs(val->name, stdout);
+            putc('\n', stdout);
           }
-          putc('\n', stdout);
         }
       }
     }
-  }
-
-  for (child_suite = suite->suites ; child_suite != NULL && child_suite->prefix != NULL ; child_suite++) {
-    munit_suite_list_tests(child_suite, show_params, pre);
   }
 
   munit_maybe_free_concat(pre, prefix, suite->prefix);
@@ -1972,7 +1964,7 @@ munit_suite_main_custom(const MunitSuite* suite, void* user_data,
         runner.parameters[parameters_size].value = (MunitParameterValue)munit_parameter_unspecified(argv[arg + 2]);
         parameters_size++;
         runner.parameters[parameters_size].name = NULL;
-        runner.parameters[parameters_size].value = (MunitParameterValue)MUNIT_END_PARAMETER;
+        runner.parameters[parameters_size].value = (MunitParameterValue)MUNIT_END_PARAMETER_VALUE;
         arg += 2;
       } else if (strcmp("color", argv[arg] + 2) == 0) {
         if (arg + 1 >= argc) {

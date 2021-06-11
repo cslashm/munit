@@ -438,7 +438,7 @@ typedef struct {
 #define munit_parameter_str(n, s)      { .name = n,    .type = 2, .str = s }
 #define munit_parameter_ui32(n, i)     { .name = n,    .type = 3, .ui32 = i }
 #define munit_parameter_unspecified(n) { .name = n,    .type =-1, .ptr = NULL }
-#define MUNIT_END_PARAMETER            { .name = NULL, .type = 0, .ptr = NULL }
+#define MUNIT_END_PARAMETER_VALUE      { .name = NULL, .type = 0, .ptr = NULL }
 
 typedef struct {
   char* name;
@@ -449,6 +449,7 @@ typedef struct {
   char*  name;
   MunitParameterValue *values;
 } MunitParameterEnum;
+#define MUNIT_END_PARAMETER_ENUM       {NULL, NULL}
 
 const MunitParameter* munit_parameters_get(const MunitParameter params[], const char* key);
 #define munit_parameters_get_ptr(params, key)   (munit_parameters_get(params,key)->value.ptr)
@@ -482,10 +483,9 @@ typedef struct MunitSuite_ MunitSuite;
 
 struct MunitSuite_ {
   char*             prefix;
-  MunitTest*        tests;
-  MunitSuite*       suites;
   unsigned int      iterations;
   MunitSuiteOptions options;
+  const MunitTest*        tests_suites[];
 };
 
 int munit_suite_main(const MunitSuite* suite, void* user_data, int argc, char* const argv[MUNIT_ARRAY_PARAM(argc + 1)]);
